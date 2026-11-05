@@ -4,6 +4,7 @@ import { MongoClient, ObjectId } from "mongodb";
 import "dotenv/config";
 import cors from "cors";
 import fs from "node:fs";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -11,6 +12,8 @@ const PORT = process.env.PORT || 8000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+
 
 // MongoDB connection
 const client = new MongoClient(process.env.MONGODB_URL);
@@ -37,6 +40,69 @@ const patientCollection = db.collection("patients");
 
 // Create unique email index
 await doctorCollection.createIndex({ email: 1 }, { unique: true });
+
+// const verifyToken = async (req, res, next) => {
+//   try {
+//     const authHeader = req.headers.authorization;
+
+//     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+//       return res.status(401).send({
+//         success: false,
+//         message: "Unauthorized",
+//       });
+//     }
+
+//     const token = authHeader.split(" ")[1];
+
+//     if (!token) {
+//       return res.status(401).send({
+//         success: false,
+//         message: "Token is missing",
+//       });
+//     }
+
+//     const JWKS = createRemoteJWKSet(
+//       new URL("http://localhost:3000/api/auth/jwks")
+//     );
+
+//     const { payload } = await jwtVerify(token, JWKS);
+
+//     req.user = payload;
+
+//     next();
+//   } catch (error) {
+//     console.error("JWT verification error:", error);
+
+//     return res.status(401).send({
+//       success: false,
+//       message: "Invalid or expired token",
+//     });
+//   }
+// };
+const verifyToken = async (req, res, next)=>{
+      const authheader = req.headers.authorization
+    // console.log(authheader)
+    if(!authheader){
+        return res.status(401).send({msg: "Unathorized"})
+    }
+    const token = authheader.split(" ")[1]
+    if(!token){
+         return res.status(401).send({msg: "Unathorized"})
+    }
+
+    const JWKS = createRemoteJWKSet(new URL('http://localhost:3000/api/auth/jwks'))
+
+   try{
+     const {payload} = await jwtVerify(token, JWKS)
+     next()
+   } catch(error){
+    return res.status(500).send({msg: "Server Error"})
+   }
+
+    // console.log(payload)
+
+    
+}
 
 
 // SERVER CHECK
@@ -76,7 +142,7 @@ app.get("/api/doctors", async (req, res) => {
 // GET SINGLE DOCTOR
 
 
-app.get("/api/doctors/:id", async (req, res) => {
+app.get("/api/doctors/:id", verifyToken, async (req, res) => {
   try {
     const { ObjectId } = await import("mongodb");
 
@@ -389,6 +455,7 @@ app.post("/api/doctors/seed", async (req, res) => {
 // GET: Get a single doctor by ID
 app.get("/api/doctors/:id", async (req, res) => {
   try {
+    
     const { id } = req.params;
 
     if (!ObjectId.isValid(id)) {
@@ -792,7 +859,7 @@ app.patch("/api/patients/:id", async (req, res) => {
    DELETE: Delete a patient
 ========================================= */
 
-app.delete("/api/patients/:id", async (req, res) => {
+app.delete("/api/patients/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
