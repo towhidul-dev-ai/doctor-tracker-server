@@ -114,7 +114,7 @@ app.get("/api/doctors/:id", async (req, res) => {
 
 // ADD NEW DOCTOR
 
-
+// ADD NEW DOCTOR
 app.post("/api/doctors", async (req, res) => {
   try {
     const {
@@ -129,7 +129,7 @@ app.post("/api/doctors", async (req, res) => {
       image,
     } = req.body;
 
-    // Validation
+    // 1. Required field validation
     if (
       typeof name !== "string" ||
       typeof specialty !== "string" ||
@@ -144,24 +144,76 @@ app.post("/api/doctors", async (req, res) => {
       });
     }
 
+    // 2. Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!emailRegex.test(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid email address",
+      });
+    }
+
+    // 3. Validate numeric fields
+    const parsedExperience =
+      experience === undefined || experience === ""
+        ? 0
+        : Number(experience);
+
+    const parsedConsultationFee =
+      consultationFee === undefined || consultationFee === ""
+        ? 0
+        : Number(consultationFee);
+
+    if (
+      !Number.isInteger(parsedExperience) ||
+      parsedExperience < 0 ||
+      !Number.isFinite(parsedConsultationFee) ||
+      parsedConsultationFee < 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Experience and consultation fee must be valid non-negative numbers",
+      });
+    }
+
+    // 4. Check duplicate email
+    const existingDoctor = await doctorCollection.findOne({
+      email: normalizedEmail,
+    });
+
+    if (existingDoctor) {
+      return res.status(409).json({
+        success: false,
+        message: "A doctor with this email already exists",
+      });
+    }
+
+    // 5. Create doctor object
     const newDoctor = {
       name: name.trim(),
       specialty: specialty.trim(),
-      email: email.trim().toLowerCase(),
+      email: normalizedEmail,
       phone: typeof phone === "string" ? phone.trim() : "",
       qualification:
-        typeof qualification === "string" ? qualification.trim() : "",
-      experience: Number(experience) || 0,
-      consultationFee: Number(consultationFee) || 0,
+        typeof qualification === "string"
+          ? qualification.trim()
+          : "",
+      experience: parsedExperience,
+      consultationFee: parsedConsultationFee,
       address: typeof address === "string" ? address.trim() : "",
       image: typeof image === "string" ? image.trim() : "",
       createdAt: new Date(),
       updatedAt: new Date(),
     };
 
+    // 6. Insert into MongoDB
     const result = await doctorCollection.insertOne(newDoctor);
 
-    res.status(201).json({
+    // 7. Success response
+    return res.status(201).json({
       success: true,
       message: "Doctor added successfully",
       data: {
@@ -172,6 +224,7 @@ app.post("/api/doctors", async (req, res) => {
   } catch (error) {
     console.error("Failed to add doctor:", error);
 
+    // Handle duplicate email index errors
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -179,12 +232,83 @@ app.post("/api/doctors", async (req, res) => {
       });
     }
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Failed to add doctor",
+      message: "Internal server error while adding doctor",
     });
   }
 });
+
+// app.post("/api/doctors", async (req, res) => {
+//   try {
+//     const {
+//       name,
+//       specialty,
+//       email,
+//       phone,
+//       qualification,
+//       experience,
+//       consultationFee,
+//       address,
+//       image,
+//     } = req.body;
+
+//     // Validation
+//     if (
+//       typeof name !== "string" ||
+//       typeof specialty !== "string" ||
+//       typeof email !== "string" ||
+//       !name.trim() ||
+//       !specialty.trim() ||
+//       !email.trim()
+//     ) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Name, specialty, and email are required",
+//       });
+//     }
+
+//     const newDoctor = {
+//       name: name.trim(),
+//       specialty: specialty.trim(),
+//       email: email.trim().toLowerCase(),
+//       phone: typeof phone === "string" ? phone.trim() : "",
+//       qualification:
+//         typeof qualification === "string" ? qualification.trim() : "",
+//       experience: Number(experience) || 0,
+//       consultationFee: Number(consultationFee) || 0,
+//       address: typeof address === "string" ? address.trim() : "",
+//       image: typeof image === "string" ? image.trim() : "",
+//       createdAt: new Date(),
+//       updatedAt: new Date(),
+//     };
+
+//     const result = await doctorCollection.insertOne(newDoctor);
+
+//     res.status(201).json({
+//       success: true,
+//       message: "Doctor added successfully",
+//       data: {
+//         ...newDoctor,
+//         _id: result.insertedId,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Failed to add doctor:", error);
+
+//     if (error.code === 11000) {
+//       return res.status(409).json({
+//         success: false,
+//         message: "A doctor with this email already exists",
+//       });
+//     }
+
+//     res.status(500).json({
+//       success: false,
+//       message: "Failed to add doctor",
+//     });
+//   }
+// });
 
 // INSERT DOCTORS FROM JSON FILE
 
