@@ -383,9 +383,8 @@ app.post("/api/doctors/seed", async (req, res) => {
 });
 
 
-// ========================================
 // DOCTOR DETAILS API
-// ========================================
+
 
 // GET: Get a single doctor by ID
 app.get("/api/doctors/:id", async (req, res) => {
@@ -425,11 +424,428 @@ app.get("/api/doctors/:id", async (req, res) => {
 });
 
 
-// ========================================
 // PATIENT MANAGEMENT APIs
-// ========================================
+
+
+// // GET: Get all patients of a specific doctor
+
+
+/* =========================================
+   GET: Get all patients
+   Supports search, filters and pagination
+========================================= */
+
+app.get("/api/patients", async (req, res) => {
+  try {
+    const {
+      search = "",
+      doctorId,
+      gender,
+      condition,
+      startDate,
+      endDate,
+      page = "1",
+      limit = "6",
+    } = req.query;
+
+    // Validate pagination
+    const currentPage = Number(page);
+    const pageSize = Number(limit);
+
+    if (
+      !Number.isInteger(currentPage) ||
+      currentPage < 1 ||
+      !Number.isInteger(pageSize) ||
+      pageSize < 1 ||
+      pageSize > 100
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid page or limit",
+      });
+    }
+
+    // Build MongoDB filter
+    const match = {};
+
+    // Filter by doctor
+    if (doctorId) {
+      if (!ObjectId.isValid(doctorId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid doctor ID",
+        });
+      }
+
+      match.doctorId = new ObjectId(doctorId);
+    }
+
+    // Filter by gender
+    if (gender) {
+      match.gender = gender;
+    }
+
+    // Filter by condition
+    if (condition) {
+      match.condition = {
+        $regex: condition,
+        $options: "i",
+      };
+    }
+
+    // Filter by registration date
+    if (startDate || endDate) {
+      match.createdAt = {};
+
+      if (startDate) {
+        const start = new Date(startDate);
+
+        if (Number.isNaN(start.getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid start date",
+          });
+        }
+
+        match.createdAt.$gte = start;
+      }
+
+      if (endDate) {
+        const end = new Date(endDate);
+
+        if (Number.isNaN(end.getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid end date",
+          });
+        }
+
+        end.setHours(23, 59, 59, 999);
+        match.createdAt.$lte = end;
+      }
+    }
+
+    // Search patient information
+    if (search.trim()) {
+      const escapedSearch = search.trim().replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      );
+
+      const searchRegex = {
+        $regex: escapedSearch,
+        $options: "i",
+      };
+
+      match.$or = [
+        { name: searchRegex },
+        { phone: searchRegex },
+        { email: searchRegex },
+        { condition: searchRegex },
+      ];
+    }
+
+    const skip = (currentPage - 1) * pageSize;
+
+    // Fetch patients and total count
+    const [result] = await patientCollection
+      .aggregate([
+        { $match: match },
+
+        {
+          $lookup: {
+            from: "doctors",
+            localField: "doctorId",
+            foreignField: "_id",
+            as: "doctor",
+          },
+        },
+
+        {
+          $unwind: {
+            path: "$doctor",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+
+        { $sort: { createdAt: -1 } },
+
+        {
+          $facet: {
+            data: [
+              { $skip: skip },
+              { $limit: pageSize },
+              {
+                $project: {
+                  name: 1,
+                  phone: 1,
+                  email: 1,
+                  age: 1,
+                  gender: 1,
+                  condition: 1,
+                  doctorId: 1,
+                  createdAt: 1,
+                  updatedAt: 1,
+                  doctor: {
+                    _id: "$doctor._id",
+                    name: "$doctor.name",
+                    specialty: "$doctor.specialty",
+                  },
+                },
+              },
+            ],
+            totalCount: [
+              { $count: "total" },
+            ],
+          },
+        },
+      ])
+      .toArray();
+
+    const total = result.totalCount[0]?.total || 0;
+
+    res.status(200).json({
+      success: true,
+      total,
+      page: currentPage,
+      limit: pageSize,
+      totalPages: Math.ceil(total / pageSize),
+      data: result.data,
+    });
+  } catch (error) {
+    console.error("Failed to fetch all patients:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch patients",
+    });
+  }
+});
+
+
+/* =========================================
+   PATCH: Update patient information
+========================================= */
+
+app.patch("/api/patients/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const {
+      name,
+      phone,
+      email,
+      age,
+      gender,
+      condition,
+      doctorId,
+    } = req.body;
+
+    // Validate patient ID
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid patient ID",
+      });
+    }
+
+    // Check whether patient exists
+    const patientId = new ObjectId(id);
+
+    const existingPatient = await patientCollection.findOne({
+      _id: patientId,
+    });
+
+    if (!existingPatient) {
+      return res.status(404).json({
+        success: false,
+        message: "Patient not found",
+      });
+    }
+
+    // Validate required fields
+    if (
+      typeof name !== "string" ||
+      typeof phone !== "string" ||
+      typeof email !== "string" ||
+      typeof gender !== "string" ||
+      typeof condition !== "string" ||
+      !name.trim() ||
+      !phone.trim() ||
+      !email.trim() ||
+      !gender.trim() ||
+      !condition.trim() ||
+      age === undefined ||
+      age === null ||
+      age === ""
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "All patient fields are required",
+      });
+    }
+
+    // Validate age
+    const patientAge = Number(age);
+
+    if (
+      !Number.isInteger(patientAge) ||
+      patientAge < 0 ||
+      patientAge > 120
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Age must be between 0 and 120",
+      });
+    }
+
+    // Validate email
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email address",
+      });
+    }
+
+    // Validate gender
+    const allowedGenders = [
+      "Male",
+      "Female",
+      "Other",
+      "Prefer not to say",
+    ];
+
+    if (!allowedGenders.includes(gender.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid gender",
+      });
+    }
+
+    // Validate assigned doctor
+    const newDoctorId = doctorId
+      ? doctorId
+      : existingPatient.doctorId.toString();
+
+    if (!ObjectId.isValid(newDoctorId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid doctor ID",
+      });
+    }
+
+    const doctorObjectId = new ObjectId(newDoctorId);
+
+    const doctor = await doctorCollection.findOne({
+      _id: doctorObjectId,
+    });
+
+    if (!doctor) {
+      return res.status(404).json({
+        success: false,
+        message: "Assigned doctor not found",
+      });
+    }
+
+    // Update patient
+    const updatedPatient = {
+      name: name.trim(),
+      phone: phone.trim(),
+      email: normalizedEmail,
+      age: patientAge,
+      gender: gender.trim(),
+      condition: condition.trim(),
+      doctorId: doctorObjectId,
+      updatedAt: new Date(),
+    };
+
+    await patientCollection.updateOne(
+      { _id: patientId },
+      { $set: updatedPatient }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Patient updated successfully",
+      data: {
+        ...existingPatient,
+        ...updatedPatient,
+        _id: patientId,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to update patient:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to update patient",
+    });
+  }
+});
+
+
+/* =========================================
+   DELETE: Delete a patient
+========================================= */
+
+app.delete("/api/patients/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Validate patient ID
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid patient ID",
+      });
+    }
+
+    const patientId = new ObjectId(id);
+
+    // Check whether patient exists
+    const existingPatient = await patientCollection.findOne({
+      _id: patientId,
+    });
+
+    if (!existingPatient) {
+      return res.status(404).json({
+        success: false,
+        message: "Patient not found",
+      });
+    }
+
+    // Delete patient
+    await patientCollection.deleteOne({
+      _id: patientId,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Patient deleted successfully",
+      data: {
+        _id: patientId,
+        name: existingPatient.name,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to delete patient:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete patient",
+    });
+  }
+});
+
+
 
 // GET: Get all patients of a specific doctor
+
+
 app.get("/api/doctors/:id/patients", async (req, res) => {
   try {
     const { id } = req.params;
@@ -474,6 +890,9 @@ app.get("/api/doctors/:id/patients", async (req, res) => {
     });
   }
 });
+
+
+// POST: Add a patient under a specific doctor
 
 
 // POST: Add a patient under a specific doctor
@@ -524,6 +943,131 @@ app.post("/api/doctors/:id/patients", async (req, res) => {
       phone: phone.trim(),
       email: email.trim().toLowerCase(),
       createdAt: new Date(),
+    };
+
+    const result = await patientCollection.insertOne(newPatient);
+
+    res.status(201).json({
+      success: true,
+      message: "Patient added successfully",
+      data: {
+        ...newPatient,
+        _id: result.insertedId,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to add patient:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to add patient",
+    });
+  }
+});
+
+
+// POST: Add a patient under a specific doctor
+app.post("/api/doctors/:id/patients", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, phone, email, age, gender, condition } = req.body;
+
+    // Validate doctor ID
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid doctor ID",
+      });
+    }
+
+    // Validate required fields
+    if (
+      typeof name !== "string" ||
+      typeof phone !== "string" ||
+      typeof email !== "string" ||
+      typeof gender !== "string" ||
+      typeof condition !== "string" ||
+      !name.trim() ||
+      !phone.trim() ||
+      !email.trim() ||
+      !gender.trim() ||
+      !condition.trim() ||
+      age === undefined ||
+      age === null ||
+      age === ""
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "All patient fields are required",
+      });
+    }
+
+    // Validate age
+    const patientAge = Number(age);
+
+    if (
+      !Number.isInteger(patientAge) ||
+      patientAge < 0 ||
+      patientAge > 120
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Age must be a number between 0 and 120",
+      });
+    }
+
+    // Validate email
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid email address",
+      });
+    }
+
+    const allowedGenders = [
+      "Male",
+      "Female",
+      "Other",
+      "Prefer not to say",
+    ];
+
+    if (!allowedGenders.includes(gender.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid gender selection",
+      });
+    }
+
+    const doctorId = new ObjectId(id);
+
+    // Check whether doctor exists
+    const doctor = await doctorCollection.findOne({
+      _id: doctorId,
+    });
+
+    if (!doctor) {
+      return res.status(404).json({
+        success: false,
+        message: "Doctor not found",
+      });
+    }
+
+    const now = new Date();
+
+    const newPatient = {
+      doctorId,
+      name: name.trim(),
+      phone: phone.trim(),
+      email: normalizedEmail,
+      age: patientAge,
+      gender: gender.trim(),
+      condition: condition.trim(),
+      createdAt: now,
+      updatedAt: now,
     };
 
     const result = await patientCollection.insertOne(newPatient);
