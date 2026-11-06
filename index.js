@@ -116,7 +116,7 @@ app.get("/", (req, res) => {
 // GET ALL DOCTORS
 
 
-app.get("/api/doctors", async (req, res) => {
+app.get("/api/doctors", verifyToken, async (req, res) => {
   try {
     const doctors = await doctorCollection
       .find({})
@@ -502,7 +502,7 @@ app.get("/api/doctors/:id", async (req, res) => {
    Supports search, filters and pagination
 ========================================= */
 
-app.get("/api/patients", async (req, res) => {
+app.get("/api/patients", verifyToken, async (req, res) => {
   try {
     const {
       search = "",
@@ -694,7 +694,7 @@ app.get("/api/patients", async (req, res) => {
    PATCH: Update patient information
 ========================================= */
 
-app.patch("/api/patients/:id", async (req, res) => {
+app.patch("/api/patients/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
